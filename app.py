@@ -8,8 +8,8 @@ import pytesseract
 
 st.set_page_config(page_title="股票形态分拣器", page_icon="📊")
 
-st.title("📊 股票形态自动分拣器 v5.1")
-st.write("直连东方财富，盘中秒级刷新！(已兼容周末与节假日)")
+st.title("📊 股票形态分拣器 v5.2 (周末侦探版)")
+st.write("直连东方财富，盘中秒级刷新！自带底层报错透视功能。")
 
 # --- 缓存股票名字字典 ---
 @st.cache_data(ttl=3600) 
@@ -51,7 +51,7 @@ if uploaded_file is not None:
 st.markdown("---")
 
 # ==========================================
-# 实盘核心逻辑 (周末兼容版)
+# 实盘核心逻辑 (周末兼容 + 报错透视)
 # ==========================================
 user_input = st.text_input("或者手动输入代码 (多只用逗号隔开):", value=auto_codes if auto_codes else "600519, 000001")
 
@@ -85,7 +85,6 @@ if st.button("🚀 开始实盘检测"):
                     df = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
                     
                     if len(df) >= 3:
-                        # (!! 核心升级 !!) 动态提取真实的交易日期 (如 2024-05-10 变成 05-10)
                         t_date = str(df.iloc[-1]['日期'])[5:]
                         y_date = str(df.iloc[-2]['日期'])[5:]
                         db_date = str(df.iloc[-3]['日期'])[5:]
@@ -94,7 +93,6 @@ if st.button("🚀 开始实盘检测"):
                         y_high = float(df.iloc[-2]['最高'])    
                         db_high = float(df.iloc[-3]['最高'])   
                         
-                        # 抛弃固定的“今高/昨高”，直接显示真实日期！
                         info_str = f"**{stock_name} ({symbol})** | {t_date}高:{t_high}  {y_date}高:{y_high}  {db_date}高:{db_high}"
                         
                         if t_high > y_high and y_high > db_high:
@@ -108,9 +106,13 @@ if st.button("🚀 开始实盘检测"):
                     else:
                         cat_error.append(f"⚠️ {stock_name} ({symbol}) 数据不足 3 天")
                 except Exception as e:
-                    cat_error.append(f"⚠️ 获取 {stock_name} ({symbol}) 失败 (周末接口可能维护中)")
+                    # ===== (!!核心透视!!) 抓取底层真实报错 =====
+                    error_msg = str(e)[:150] # 截取一段报错信息防止撑爆屏幕
+                    cat_error.append(f"⚠️ 崩溃！获取 {stock_name} ({symbol}) 失败。底层原因: {error_msg}")
 
-        # 展示报告 (文案同步升级)
+        # ==========================================
+        # 展示报告
+        # ==========================================
         st.subheader("🎯 交易日分类报告")
         
         st.success("🔥 **【双日连破】 (最新高 > 次新高 > 前高)**")
@@ -137,6 +139,8 @@ if st.button("🚀 开始实盘检测"):
         else:
             st.write("  (空)")
 
+        # 重点看这里：打印真实错误！
         if cat_error:
             st.markdown("---")
+            st.error("🚨 下方是系统底层截获的真实错误原因，请发给助手诊断：")
             for s in cat_error: st.write(s)
