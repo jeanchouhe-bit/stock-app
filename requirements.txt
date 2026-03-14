@@ -1,3 +1,5 @@
 streamlit
-baostock
+akshare
 pandas
+pytesseract
+Pillow
