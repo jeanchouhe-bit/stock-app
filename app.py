@@ -8,10 +8,10 @@ import pytesseract
 
 st.set_page_config(page_title="股票形态分拣器", page_icon="📊")
 
-st.title("📊 股票形态自动分拣器 v5.0 (实盘版)")
-st.write("直连东方财富，盘中秒级刷新！截图上传，自动识别代码。")
+st.title("📊 股票形态自动分拣器 v5.1")
+st.write("直连东方财富，盘中秒级刷新！(已兼容周末与节假日)")
 
-# --- 缓存股票名字字典，极速响应 ---
+# --- 缓存股票名字字典 ---
 @st.cache_data(ttl=3600) 
 def get_stock_dict():
     try:
@@ -34,9 +34,10 @@ if uploaded_file is not None:
     with st.spinner("正在呼叫 AI 扫描图片中的代码..."):
         try:
             image = Image.open(uploaded_file)
-            text = pytesseract.image_to_string(image)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            text = pytesseract.image_to_string(image, config='--psm 6')
             
-            # 精准抓取 6 位数 A股代码
             codes = re.findall(r'\b(60\d{4}|68\d{4}|00\d{4}|30\d{4})\b', text)
             unique_codes = list(set(codes))
             
@@ -50,13 +51,12 @@ if uploaded_file is not None:
 st.markdown("---")
 
 # ==========================================
-# 实盘核心逻辑
+# 实盘核心逻辑 (周末兼容版)
 # ==========================================
 user_input = st.text_input("或者手动输入代码 (多只用逗号隔开):", value=auto_codes if auto_codes else "600519, 000001")
 
 if st.button("🚀 开始实盘检测"):
     
-    # 提取纯数字代码，AKShare 不需要 sh/sz 前缀
     raw_list = user_input.replace("，", ",").split(",")
     clean_stocks = []
     for raw in raw_list:
@@ -67,9 +67,8 @@ if st.button("🚀 开始实盘检测"):
     if not clean_stocks:
         st.warning("❌ 请输入有效的股票代码！")
     else:
-        with st.spinner("⚡ 正在直连实盘接口，拉取实时分时数据..."):
+        with st.spinner("⚡ 正在直连实盘接口，拉取数据..."):
             
-            # AKShare 需要的日期格式是 YYYYMMDD
             end_date = datetime.date.today().strftime('%Y%m%d')
             start_date = (datetime.date.today() - datetime.timedelta(days=20)).strftime('%Y%m%d')
 
@@ -83,16 +82,20 @@ if st.button("🚀 开始实盘检测"):
                 stock_name = stock_map.get(symbol, symbol)
 
                 try:
-                    # (!! 核心升级 !!) 获取包含今天盘中实时数据的 K线
                     df = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
                     
                     if len(df) >= 3:
-                        # iloc[-1] 就是此时此刻的实时数据！
+                        # (!! 核心升级 !!) 动态提取真实的交易日期 (如 2024-05-10 变成 05-10)
+                        t_date = str(df.iloc[-1]['日期'])[5:]
+                        y_date = str(df.iloc[-2]['日期'])[5:]
+                        db_date = str(df.iloc[-3]['日期'])[5:]
+
                         t_high = float(df.iloc[-1]['最高'])    
                         y_high = float(df.iloc[-2]['最高'])    
                         db_high = float(df.iloc[-3]['最高'])   
                         
-                        info_str = f"**{stock_name} ({symbol})** | 今高:{t_high} 昨高:{y_high} 前高:{db_high}"
+                        # 抛弃固定的“今高/昨高”，直接显示真实日期！
+                        info_str = f"**{stock_name} ({symbol})** | {t_date}高:{t_high}  {y_date}高:{y_high}  {db_date}高:{db_high}"
                         
                         if t_high > y_high and y_high > db_high:
                             cat_2_break.append(info_str)
@@ -105,30 +108,30 @@ if st.button("🚀 开始实盘检测"):
                     else:
                         cat_error.append(f"⚠️ {stock_name} ({symbol}) 数据不足 3 天")
                 except Exception as e:
-                    cat_error.append(f"⚠️ 获取 {stock_name} ({symbol}) 失败 (可能退市或停牌)")
+                    cat_error.append(f"⚠️ 获取 {stock_name} ({symbol}) 失败 (周末接口可能维护中)")
 
-        # 展示报告
-        st.subheader("🎯 实盘分类报告")
+        # 展示报告 (文案同步升级)
+        st.subheader("🎯 交易日分类报告")
         
-        st.success("🔥 **【双日连破】 (盘中最新高 > 昨高 > 前高)**")
+        st.success("🔥 **【双日连破】 (最新高 > 次新高 > 前高)**")
         if cat_2_break:
             for s in cat_2_break: st.write("✅ " + s)
         else:
             st.write("  (空)")
 
-        st.info("💡 **【今日刚突破】 (盘中最新高 > 昨高，昨高 <= 前高)**")
+        st.info("💡 **【最新日突破】 (最新高 > 次新高，次新高 <= 前高)**")
         if cat_1_break:
             for s in cat_1_break: st.write("↗️ " + s)
         else:
             st.write("  (空)")
 
-        st.error("🧊 **【连续两日未突破】 (盘中最新高 <= 昨高 <= 前高)**")
+        st.error("🧊 **【连续两日未突破】 (最新高 <= 次新高 <= 前高)**")
         if cat_0_break:
             for s in cat_0_break: st.write("❌ " + s)
         else:
             st.write("  (空)")
 
-        st.warning("⚠️ **【今日冲高回落】 (盘中最新高 <= 昨高，昨高 > 前高)**")
+        st.warning("⚠️ **【最新日冲高回落】 (最新高 <= 次新高，次新高 > 前高)**")
         if cat_drop:
             for s in cat_drop: st.write("📉 " + s)
         else:
