@@ -1,5 +1,6 @@
 import streamlit as st
 import akshare as ak
+import baostock as bs
 import pandas as pd
 import datetime
 import re
@@ -8,8 +9,8 @@ import pytesseract
 
 st.set_page_config(page_title="股票形态分拣器", page_icon="📊")
 
-st.title("📊 股票形态分拣器 v5.2 (周末侦探版)")
-st.write("直连东方财富，盘中秒级刷新！自带底层报错透视功能。")
+st.title("📊 股票形态分拣器 v5.3 (双核终极版)")
+st.write("工作日直连实盘，周末自动降级复盘引擎，全天候 24 小时待命！")
 
 # --- 缓存股票名字字典 ---
 @st.cache_data(ttl=3600) 
@@ -51,11 +52,11 @@ if uploaded_file is not None:
 st.markdown("---")
 
 # ==========================================
-# 实盘核心逻辑 (周末兼容 + 报错透视)
+# 核心逻辑：双引擎智能切换
 # ==========================================
 user_input = st.text_input("或者手动输入代码 (多只用逗号隔开):", value=auto_codes if auto_codes else "600519, 000001")
 
-if st.button("🚀 开始实盘检测"):
+if st.button("🚀 开始检测 (双核驱动)"):
     
     raw_list = user_input.replace("，", ",").split(",")
     clean_stocks = []
@@ -67,10 +68,15 @@ if st.button("🚀 开始实盘检测"):
     if not clean_stocks:
         st.warning("❌ 请输入有效的股票代码！")
     else:
-        with st.spinner("⚡ 正在直连实盘接口，拉取数据..."):
+        with st.spinner("⚡ 正在智能拉取数据 (实盘优先，复盘保底)..."):
             
-            end_date = datetime.date.today().strftime('%Y%m%d')
-            start_date = (datetime.date.today() - datetime.timedelta(days=20)).strftime('%Y%m%d')
+            today = datetime.date.today()
+            # AKShare 需要的日期格式 (YYYYMMDD)
+            ak_end = today.strftime('%Y%m%d')
+            ak_start = (today - datetime.timedelta(days=20)).strftime('%Y%m%d')
+            # Baostock 需要的日期格式 (YYYY-MM-DD)
+            bs_end = today.strftime('%Y-%m-%d')
+            bs_start = (today - datetime.timedelta(days=20)).strftime('%Y-%m-%d')
 
             cat_2_break = []  
             cat_1_break = []  
@@ -78,42 +84,78 @@ if st.button("🚀 开始实盘检测"):
             cat_drop = []     
             cat_error = []    
 
+            # 提前登录 Baostock 备用
+            bs.login()
+
             for symbol in clean_stocks:
                 stock_name = stock_map.get(symbol, symbol)
+                
+                t_date, y_date, db_date = "", "", ""
+                t_high, y_high, db_high = 0.0, 0.0, 0.0
+                engine_tag = ""
+                fetch_success = False
 
+                # -----------------------------------
+                # 引擎 1: 优先尝试 AKShare 实盘
+                # -----------------------------------
                 try:
-                    df = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
-                    
+                    df = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=ak_start, end_date=ak_end, adjust="qfq")
                     if len(df) >= 3:
                         t_date = str(df.iloc[-1]['日期'])[5:]
                         y_date = str(df.iloc[-2]['日期'])[5:]
                         db_date = str(df.iloc[-3]['日期'])[5:]
-
                         t_high = float(df.iloc[-1]['最高'])    
                         y_high = float(df.iloc[-2]['最高'])    
                         db_high = float(df.iloc[-3]['最高'])   
-                        
-                        info_str = f"**{stock_name} ({symbol})** | {t_date}高:{t_high}  {y_date}高:{y_high}  {db_date}高:{db_high}"
-                        
-                        if t_high > y_high and y_high > db_high:
-                            cat_2_break.append(info_str)
-                        elif t_high > y_high and y_high <= db_high:
-                            cat_1_break.append(info_str)
-                        elif t_high <= y_high and y_high <= db_high:
-                            cat_0_break.append(info_str)
-                        elif t_high <= y_high and y_high > db_high:
-                            cat_drop.append(info_str)
+                        engine_tag = "⚡实盘"
+                        fetch_success = True
                     else:
-                        cat_error.append(f"⚠️ {stock_name} ({symbol}) 数据不足 3 天")
-                except Exception as e:
-                    # ===== (!!核心透视!!) 抓取底层真实报错 =====
-                    error_msg = str(e)[:150] # 截取一段报错信息防止撑爆屏幕
-                    cat_error.append(f"⚠️ 崩溃！获取 {stock_name} ({symbol}) 失败。底层原因: {error_msg}")
+                        raise ValueError("AKShare 数据不足")
+                        
+                except Exception as e_ak:
+                    # -----------------------------------
+                    # 引擎 2: 捕获到断网/报错，无缝降级 Baostock
+                    # -----------------------------------
+                    bs_code = "sh." + symbol if symbol.startswith('6') else "sz." + symbol
+                    rs = bs.query_history_k_data_plus(
+                        bs_code, "date,high", start_date=bs_start, end_date=bs_end, frequency="d"
+                    )
+                    data = []
+                    while (rs.error_code == '0') & rs.next():
+                        data.append(rs.get_row_data())
+                        
+                    if len(data) >= 3:
+                        t_date = str(data[-1][0])[5:]
+                        y_date = str(data[-2][0])[5:]
+                        db_date = str(data[-3][0])[5:]
+                        t_high = float(data[-1][1])    
+                        y_high = float(data[-2][1])    
+                        db_high = float(data[-3][1])   
+                        engine_tag = "🕰️复盘"
+                        fetch_success = True
+
+                # --- 统一的分拣逻辑 ---
+                if fetch_success:
+                    info_str = f"**{stock_name} ({symbol})** [{engine_tag}] | {t_date}高:{t_high}  {y_date}高:{y_high}  {db_date}高:{db_high}"
+                    
+                    if t_high > y_high and y_high > db_high:
+                        cat_2_break.append(info_str)
+                    elif t_high > y_high and y_high <= db_high:
+                        cat_1_break.append(info_str)
+                    elif t_high <= y_high and y_high <= db_high:
+                        cat_0_break.append(info_str)
+                    elif t_high <= y_high and y_high > db_high:
+                        cat_drop.append(info_str)
+                else:
+                    cat_error.append(f"⚠️ {stock_name} ({symbol}) 双引擎均获取失败 (可能是新股或长期停牌)")
+
+            # 用完后登出 Baostock
+            bs.logout()
 
         # ==========================================
         # 展示报告
         # ==========================================
-        st.subheader("🎯 交易日分类报告")
+        st.subheader("🎯 智能分拣报告")
         
         st.success("🔥 **【双日连破】 (最新高 > 次新高 > 前高)**")
         if cat_2_break:
@@ -139,8 +181,6 @@ if st.button("🚀 开始实盘检测"):
         else:
             st.write("  (空)")
 
-        # 重点看这里：打印真实错误！
         if cat_error:
             st.markdown("---")
-            st.error("🚨 下方是系统底层截获的真实错误原因，请发给助手诊断：")
             for s in cat_error: st.write(s)
