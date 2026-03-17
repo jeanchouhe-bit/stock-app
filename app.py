@@ -1,27 +1,16 @@
 import streamlit as st
-import akshare as ak
 import baostock as bs
 import pandas as pd
 import datetime
 import re
 from PIL import Image
 import pytesseract
+import requests  # 新增的网络请求库
 
 st.set_page_config(page_title="股票形态分拣器", page_icon="📊")
 
-st.title("📊 股票形态分拣器 v5.3 (双核终极版)")
-st.write("工作日直连实盘，周末自动降级复盘引擎，全天候 24 小时待命！")
-
-# --- 缓存股票名字字典 ---
-@st.cache_data(ttl=3600) 
-def get_stock_dict():
-    try:
-        df_info = ak.stock_info_a_code_name()
-        return dict(zip(df_info['code'], df_info['name']))
-    except:
-        return {}
-
-stock_map = get_stock_dict()
+st.title("📊 股票形态分拣器 v6.0 (腾讯直连版)")
+st.write("彻底无视云端IP封锁！采用【腾讯实时滴答 + BS历史底座】缝合技术，极致稳定！")
 
 # ==========================================
 # 图片上传与识别模块
@@ -52,11 +41,11 @@ if uploaded_file is not None:
 st.markdown("---")
 
 # ==========================================
-# 核心逻辑：双引擎智能切换
+# 核心逻辑：腾讯实盘 + Baostock 历史完美缝合
 # ==========================================
 user_input = st.text_input("或者手动输入代码 (多只用逗号隔开):", value=auto_codes if auto_codes else "600519, 000001")
 
-if st.button("🚀 开始检测 (双核驱动)"):
+if st.button("🚀 开始极速实盘检测"):
     
     raw_list = user_input.replace("，", ",").split(",")
     clean_stocks = []
@@ -68,13 +57,9 @@ if st.button("🚀 开始检测 (双核驱动)"):
     if not clean_stocks:
         st.warning("❌ 请输入有效的股票代码！")
     else:
-        with st.spinner("⚡ 正在智能拉取数据 (实盘优先，复盘保底)..."):
+        with st.spinner("⚡ 正在混合双打：腾讯获取此时此刻 + BS获取历史底座..."):
             
             today = datetime.date.today()
-            # AKShare 需要的日期格式 (YYYYMMDD)
-            ak_end = today.strftime('%Y%m%d')
-            ak_start = (today - datetime.timedelta(days=20)).strftime('%Y%m%d')
-            # Baostock 需要的日期格式 (YYYY-MM-DD)
             bs_end = today.strftime('%Y-%m-%d')
             bs_start = (today - datetime.timedelta(days=20)).strftime('%Y-%m-%d')
 
@@ -84,59 +69,72 @@ if st.button("🚀 开始检测 (双核驱动)"):
             cat_drop = []     
             cat_error = []    
 
-            # 提前登录 Baostock 备用
             bs.login()
 
             for symbol in clean_stocks:
-                stock_name = stock_map.get(symbol, symbol)
+                # 组装代码
+                bs_code = "sh." + symbol if symbol.startswith('6') else "sz." + symbol
+                tc_code = bs_code.replace('.', '') # 腾讯格式: sh600519
                 
-                t_date, y_date, db_date = "", "", ""
-                t_high, y_high, db_high = 0.0, 0.0, 0.0
-                engine_tag = ""
-                fetch_success = False
-
                 # -----------------------------------
-                # 引擎 1: 优先尝试 AKShare 实盘
+                # 1. 腾讯接口抓取最新实盘 (名字 + 今日最高价)
                 # -----------------------------------
+                tc_name = symbol
+                tc_high = 0.0
+                tc_date = ""
+                engine_tag = "🕰️复盘" # 默认标签
+                
                 try:
-                    df = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=ak_start, end_date=ak_end, adjust="qfq")
-                    if len(df) >= 3:
-                        t_date = str(df.iloc[-1]['日期'])[5:]
-                        y_date = str(df.iloc[-2]['日期'])[5:]
-                        db_date = str(df.iloc[-3]['日期'])[5:]
-                        t_high = float(df.iloc[-1]['最高'])    
-                        y_high = float(df.iloc[-2]['最高'])    
-                        db_high = float(df.iloc[-3]['最高'])   
-                        engine_tag = "⚡实盘"
-                        fetch_success = True
+                    # 直连腾讯财经，永不封锁！
+                    res = requests.get(f"http://qt.gtimg.cn/q={tc_code}", timeout=3)
+                    content = res.text.split('="')[1].split('";')[0]
+                    fields = content.split('~')
+                    
+                    if len(fields) > 33:
+                        tc_name = fields[1]            # 第1位是名字
+                        tc_high = float(fields[33])    # 第33位是今日最高价
+                        d_str = fields[30][:8]         # 第30位是时间戳 20260317...
+                        tc_date = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
+                except:
+                    pass # 哪怕腾讯挂了，静默跳过，靠BS兜底
+                
+                # -----------------------------------
+                # 2. Baostock 抓取历史数据
+                # -----------------------------------
+                rs = bs.query_history_k_data_plus(
+                    bs_code, "date,high", start_date=bs_start, end_date=bs_end, frequency="d"
+                )
+                data = []
+                while (rs.error_code == '0') & rs.next():
+                    data.append(rs.get_row_data())
+                    
+                # -----------------------------------
+                # 3. 终极缝合魔术：把今天的数据拼接到昨天后面
+                # -----------------------------------
+                if tc_date and tc_high > 0:
+                    if len(data) > 0:
+                        if tc_date == data[-1][0]:
+                            # 盘后情况：BS已经有了今天的数据，那就取两者的最大值
+                            data[-1][1] = str(max(float(data[-1][1]), tc_high))
+                        elif tc_date > data[-1][0]:
+                            # 盘中情况：BS只有昨天的数据，完美！把腾讯的“今天”追加进去
+                            data.append([tc_date, str(tc_high)])
+                            engine_tag = "⚡腾讯实盘"
                     else:
-                        raise ValueError("AKShare 数据不足")
-                        
-                except Exception as e_ak:
-                    # -----------------------------------
-                    # 引擎 2: 捕获到断网/报错，无缝降级 Baostock
-                    # -----------------------------------
-                    bs_code = "sh." + symbol if symbol.startswith('6') else "sz." + symbol
-                    rs = bs.query_history_k_data_plus(
-                        bs_code, "date,high", start_date=bs_start, end_date=bs_end, frequency="d"
-                    )
-                    data = []
-                    while (rs.error_code == '0') & rs.next():
-                        data.append(rs.get_row_data())
-                        
-                    if len(data) >= 3:
-                        t_date = str(data[-1][0])[5:]
-                        y_date = str(data[-2][0])[5:]
-                        db_date = str(data[-3][0])[5:]
-                        t_high = float(data[-1][1])    
-                        y_high = float(data[-2][1])    
-                        db_high = float(data[-3][1])   
-                        engine_tag = "🕰️复盘"
-                        fetch_success = True
+                        data.append([tc_date, str(tc_high)])
 
-                # --- 统一的分拣逻辑 ---
-                if fetch_success:
-                    info_str = f"**{stock_name} ({symbol})** [{engine_tag}] | {t_date}高:{t_high}  {y_date}高:{y_high}  {db_date}高:{db_high}"
+                # -----------------------------------
+                # 4. 统一分拣逻辑
+                # -----------------------------------
+                if len(data) >= 3:
+                    t_date = str(data[-1][0])[5:]
+                    y_date = str(data[-2][0])[5:]
+                    db_date = str(data[-3][0])[5:]
+                    t_high = float(data[-1][1])    
+                    y_high = float(data[-2][1])    
+                    db_high = float(data[-3][1])   
+                    
+                    info_str = f"**{tc_name} ({symbol})** [{engine_tag}] | {t_date}高:{t_high}  {y_date}高:{y_high}  {db_date}高:{db_high}"
                     
                     if t_high > y_high and y_high > db_high:
                         cat_2_break.append(info_str)
@@ -147,9 +145,8 @@ if st.button("🚀 开始检测 (双核驱动)"):
                     elif t_high <= y_high and y_high > db_high:
                         cat_drop.append(info_str)
                 else:
-                    cat_error.append(f"⚠️ {stock_name} ({symbol}) 双引擎均获取失败 (可能是新股或长期停牌)")
+                    cat_error.append(f"⚠️ {tc_name} ({symbol}) 数据不足 3 天 (新股或停牌)")
 
-            # 用完后登出 Baostock
             bs.logout()
 
         # ==========================================

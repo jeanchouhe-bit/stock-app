@@ -1,6 +1,5 @@
 streamlit
-akshare
 baostock
 pandas
 pytesseract
-Pillow
+requests
