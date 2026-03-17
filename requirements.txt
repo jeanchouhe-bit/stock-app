@@ -3,3 +3,4 @@ baostock
 pandas
 pytesseract
 requests
+openpyxl
