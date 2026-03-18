@@ -3,3 +3,7 @@ baostock
 pandas
 requests
 openpyxl
+Pillow
+rapidocr_onnxruntime
+numpy
+opencv-python-headless
