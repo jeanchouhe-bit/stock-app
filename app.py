@@ -206,4 +206,23 @@ if st.button("🚀 启动极速分拣", use_container_width=True):
                     pattern = "🔥 双日连破" if (t_high > y_high > db_high) else ("💡 今日突破" if (t_high > y_high <= db_high) else ("🧊 连续未破" if (t_high <= y_high <= db_high) else "📉 冲高回落"))
                     all_results.append({
                         "股票代码": symbol, "股票名称": tc_name, "形态判定": pattern, "📍 BOLL状态": boll_status,
-                        f"最新高({t_date})": t_high, f"次新高({y_date})": y_high, f
+                        f"最新高({t_date})": t_high, f"次新高({y_date})": y_high, f"前高({db_date})": db_high, "数据引擎": engine_tag
+                    })
+                else: error_logs.append(f"{tc_name}({symbol})")
+
+        if all_results:
+            st.markdown("---")
+            st.subheader(f"📊 自动化复盘看板 (已处理 {len(all_results)} 只标的)")
+            df_all = pd.DataFrame(all_results)
+            tab1, tab2, tab3, tab4 = st.tabs(["🔥 双日连破", "💡 今日突破", "🧊 连续未破", "📉 冲高回落"])
+            with tab1: st.dataframe(df_all[df_all['形态判定'] == "🔥 双日连破"], use_container_width=True, hide_index=True)
+            with tab2: st.dataframe(df_all[df_all['形态判定'] == "💡 今日突破"], use_container_width=True, hide_index=True)
+            with tab3: st.dataframe(df_all[df_all['形态判定'] == "🧊 连续未破"], use_container_width=True, hide_index=True)
+            with tab4: st.dataframe(df_all[df_all['形态判定'] == "📉 冲高回落"], use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_all.to_excel(writer, index=False, sheet_name='形态与空间全景图')
+            st.download_button(label="📥 一键下载完整复盘报表 (Excel)", data=buffer.getvalue(), file_name=f"量化复盘报告_{datetime.date.today()}.xlsx", mime="application/vnd.ms-excel", use_container_width=True)
+
+        if error_logs: st.caption(f"⚠️ 忽略了 {len(error_logs)} 只数据不足的标的: {', '.join(error_logs)}")
