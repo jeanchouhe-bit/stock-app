@@ -3,23 +3,50 @@ import baostock as bs
 import pandas as pd
 import datetime
 import re
-from PIL import Image, ImageOps
-import numpy as np
-from rapidocr_onnxruntime import RapidOCR
 import requests
 import io
+import base64
 
 st.set_page_config(page_title="股票分拣终端", page_icon="📈", layout="wide")
 
-st.title("📈 股票分拣终端 v10.2 (显微镜增强版)")
-st.markdown("⚡ **双核引擎:** 腾讯实盘 + BS历史 | 🔬 **显微视觉:** 无损放大重采样 + 深度学习，专治百股蚂蚁字！")
+st.title("📈 股票分拣终端 v11.0 (百度天眼版)")
+st.markdown("⚡ **双核引擎:** 腾讯实盘 + BS历史 | 👁️ **降维打击:** 接入百度高精度通用 OCR 接口，粉碎一切反爬截图！")
 
-@st.cache_resource(show_spinner=False)
-def load_ocr_engine():
-    return RapidOCR()
+# ==========================================
+# 🛑 核心机密区：填入你的百度 API 钥匙
+# ==========================================
+BAIDU_AK = "WuNy109oDeyCj9OtEn2THP4o"   # <--- 填在这里（保留双引号）
+BAIDU_SK = "XIgXKIDWEZwwmapYOfIqyep0coyUGcZ0" # <--- 填在这里（保留双引号）
 
-ocr = load_ocr_engine()
+# ==========================================
+# 百度 API 通信模块
+# ==========================================
+def get_baidu_token():
+    """用钥匙去百度换取临时通行证 (Token)"""
+    url = f"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id={BAIDU_AK}&client_secret={BAIDU_SK}"
+    res = requests.post(url)
+    return res.json().get("access_token")
 
+def baidu_ocr_scan(image_bytes, token):
+    """调用百度高精度 OCR 接口"""
+    url = f"https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic?access_token={token}"
+    img_b64 = base64.b64encode(image_bytes).decode()
+    payload = {"image": img_b64}
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    
+    res = requests.post(url, data=payload, headers=headers)
+    result = res.json()
+    
+    if "words_result" in result:
+        # 把百度识别出来的每一行文字，用空格拼成一大段长文本
+        text = " ".join([w["words"] for w in result["words_result"]])
+        return text
+    else:
+        raise Exception(f"百度 API 报错了: {result}")
+
+# ==========================================
+# 记忆缓存模块
+# ==========================================
 @st.cache_data(ttl=3600*12, show_spinner=False)
 def get_baostock_history(symbol):
     bs.login()
@@ -27,11 +54,9 @@ def get_baostock_history(symbol):
     today = datetime.date.today()
     bs_end = today.strftime('%Y-%m-%d')
     bs_start = (today - datetime.timedelta(days=45)).strftime('%Y-%m-%d')
-    
     rs = bs.query_history_k_data_plus(bs_code, "date,high,close", start_date=bs_start, end_date=bs_end, frequency="d")
     data = []
-    while (rs.error_code == '0') & rs.next():
-        data.append(rs.get_row_data())
+    while (rs.error_code == '0') & rs.next(): data.append(rs.get_row_data())
     bs.logout()
     return data
 
@@ -44,89 +69,62 @@ def get_tencent_batch_realtime(symbol_list):
         blocks = res.text.split(';')
         for block in blocks:
             if '="' in block:
-                code_part = block.split('="')[0].split('_')[-1]
-                clean_code = code_part[2:]
-                content = block.split('="')[1]
-                fields = content.split('~')
+                code_part = block.split('="')[0].split('_')[-1][2:]
+                fields = block.split('="')[1].split('~')
                 if len(fields) > 33:
                     d_str = fields[30][:8]
-                    result_dict[clean_code] = {
-                        "name": fields[1],
-                        "price": float(fields[3]),
-                        "high": float(fields[33]),
-                        "date": f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
-                    }
+                    result_dict[code_part] = {"name": fields[1], "price": float(fields[3]), "high": float(fields[33]), "date": f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"}
         return result_dict
-    except:
-        return {}
+    except: return {}
 
 # ==========================================
-# 交互界面：显微镜级增强扫描
+# 交互界面：呼叫大厂算力
 # ==========================================
-with st.expander("📸 展开使用【显微视觉扫码】 (已加入无损放大抗锯齿)", expanded=True):
+with st.expander("📸 展开使用【百度天眼扫码】 (直接上传，秒级解析)", expanded=True):
     uploaded_file = st.file_uploader("支持上传 100+ 密集股票截图", type=["jpg", "png", "jpeg"])
     
     auto_codes = ""
     if uploaded_file is not None:
         col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            st.image(uploaded_file, caption="原始截图 (可能存在像素粘连)", use_container_width=True)
+        with col1: st.image(uploaded_file, caption="原始截图", use_container_width=True)
             
         with col2:
-            with st.spinner("🔬 正在对图像进行无损重采样放大与增强..."):
+            with st.spinner("📡 正在将图像加密发送至百度算力集群..."):
                 try:
-                    # 1. 打开图片
-                    img = Image.open(uploaded_file)
-                    
-                    # 2. (!!核心修复!!) 显微镜无损放大 2.5 倍
-                    # 使用 LANCZOS 算法，能最大程度把模糊的数字边缘补齐，防止 0 变成 C
-                    w, h = img.size
-                    img_large = img.resize((int(w * 2.5), int(h * 2.5)), Image.Resampling.LANCZOS)
-                    
-                    # 3. 强制灰度去色 + 自动对比度拉伸 (让灰色的数字变白/变黑，更清晰)
-                    img_gray = img_large.convert('L')
-                    img_enhanced = ImageOps.autocontrast(img_gray)
-                    
-                    # 4. 转回 RGB 格式喂给 RapidOCR
-                    img_ready = img_enhanced.convert('RGB')
-                    img_np = np.array(img_ready)
-                    
-                    # st.image(img_ready, caption="AI 视角的增强画面 (用于调试)", use_container_width=True)
-                    
-                    result, _ = ocr(img_np)
-                    
-                    text = ""
-                    if result:
-                        for line in result:
-                            # 暴力替换掉 AI 容易认错的极其相似的字符 (容错补丁)
-                            raw_line = line[1].replace('O', '0').replace('o', '0').replace('C', '0').replace('I', '1').replace('l', '1')
-                            text += raw_line + " "
-                    
-                    # 暴力抓取 6 位数
-                    codes = re.findall(r'(60\d{4}|68\d{4}|00\d{4}|30\d{4})', text)
-                    unique_codes = list(set(codes))
-                    
-                    if unique_codes:
-                        unique_codes.sort()
-                        st.success(f"🎉 显微增强成功！从乱码中抢救回 {len(unique_codes)} 只股票！")
-                        auto_codes = ", ".join(unique_codes)
-                        st.code(auto_codes)
+                    if BAIDU_AK == "在这里填入你的API_Key":
+                        st.error("⚠️ 滴滴滴！你忘记在代码第 17 行填入 AK 和 SK 啦！")
                     else:
-                        st.error("仍然未找到代码，截图可能过度压缩。")
+                        # 1. 换取通行证
+                        token = get_baidu_token()
+                        if not token: st.error("获取通行证失败，请检查 AK 和 SK 是否复制完整。")
                         
-                    with st.expander("🛠️ 查看增强后的 AI 识别原文"):
-                        st.text(text)
+                        # 2. 发送图片给百度识别
+                        image_bytes = uploaded_file.getvalue()
+                        text = baidu_ocr_scan(image_bytes, token)
                         
+                        # 3. 从百度的完美识别结果中暴力抓取 6 位数
+                        codes = re.findall(r'(60\d{4}|68\d{4}|00\d{4}|30\d{4})', text)
+                        unique_codes = list(set(codes))
+                        
+                        if unique_codes:
+                            unique_codes.sort()
+                            st.success(f"🎉 降维打击成功！百度集群精准锁定 {len(unique_codes)} 只股票！")
+                            auto_codes = ", ".join(unique_codes)
+                            st.code(auto_codes)
+                        else:
+                            st.error("百度没有在图中找到代码。")
+                            
+                        with st.expander("🛠️ 查看百度传回的原始识别结果"):
+                            st.text(text)
                 except Exception as e:
-                    st.error(f"AI 引擎崩溃: {e}")
+                    st.error(f"调用百度 API 失败: {e}")
 st.markdown("---")
 
 st.markdown("### ⌨️ 代码控制台")
 user_input = st.text_input("待检测阵列 (逗号分隔):", value=auto_codes if auto_codes else "600519, 000001")
 
 # ==========================================
-# 主力运算引擎 (保持极速逻辑)
+# 主力运算引擎
 # ==========================================
 if st.button("🚀 启动极速分拣", use_container_width=True):
     raw_list = user_input.replace("，", ",").split(",")
@@ -144,9 +142,7 @@ if st.button("🚀 启动极速分拣", use_container_width=True):
                 bs_data = get_baostock_history(symbol)
                 tc_info = tc_realtime_data.get(symbol, {})
                 tc_name = tc_info.get("name", symbol)
-                tc_high = tc_info.get("high", 0.0)
-                tc_price = tc_info.get("price", 0.0)
-                tc_date = tc_info.get("date", "")
+                tc_high, tc_price, tc_date = tc_info.get("high", 0.0), tc_info.get("price", 0.0), tc_info.get("date", "")
                 engine_tag = "🕰️ 复盘"
                 
                 if len(bs_data) > 0:
@@ -165,12 +161,11 @@ if st.button("🚀 启动极速分拣", use_container_width=True):
                     df['MA20'], df['STD'] = df['close'].rolling(20).mean(), df['close'].rolling(20).std(ddof=0)
                     df['UP'], df['LOW'] = df['MA20'] + 2 * df['STD'], df['MA20'] - 2 * df['STD']
                     cp, up, mid, low = df.iloc[-1]['close'], df.iloc[-1]['UP'], df.iloc[-1]['MA20'], df.iloc[-1]['LOW']
-                    threshold = 0.015
                     if cp > up: boll_status = "🔥 突破上轨"
                     elif cp < low: boll_status = "🧊 跌破下轨"
-                    elif abs(cp - up) / up <= threshold: boll_status = "🎯 接近上轨"
-                    elif abs(cp - mid) / mid <= threshold: boll_status = "🎯 接近中轨"
-                    elif abs(cp - low) / low <= threshold: boll_status = "🎯 接近下轨"
+                    elif abs(cp - up) / up <= 0.015: boll_status = "🎯 接近上轨"
+                    elif abs(cp - mid) / mid <= 0.015: boll_status = "🎯 接近中轨"
+                    elif abs(cp - low) / low <= 0.015: boll_status = "🎯 接近下轨"
                     else: boll_status = "〰️ 通道内"
                 elif len(df) > 0: boll_status = "数据不足"
 
