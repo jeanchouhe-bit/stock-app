@@ -16,8 +16,8 @@ st.markdown("⚡ **双核引擎:** 腾讯实盘 + BS历史 | 👁️ **降维打
 # ==========================================
 # 🛑 核心机密区：填入你的百度 API 钥匙
 # ==========================================
-BAIDU_AK = "WuNy109oDeyCj9OtEn2THP4"   # <--- 填在这里（保留双引号）
-BAIDU_SK = "XIgXKIDWEZwwmapYOfIqyep0coyU" # <--- 填在这里（保留双引号）
+BAIDU_AK = "WuNy109oDeyCj9OtEn2THP4o"   # <--- 填在这里（保留双引号）
+BAIDU_SK = "XIgXKIDWEZwwmapYOfIqyep0coyUGcZ0" # <--- 填在这里（保留双引号）
 
 # ==========================================
 # 百度 API 通信模块
