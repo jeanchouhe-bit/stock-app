@@ -1,6 +1,8 @@
 streamlit
 baostock
 pandas
-pytesseract
 requests
 openpyxl
+Pillow
+rapidocr_onnxruntime
+numpy

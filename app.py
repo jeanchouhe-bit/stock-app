@@ -3,15 +3,25 @@ import baostock as bs
 import pandas as pd
 import datetime
 import re
-from PIL import Image, ImageOps, ImageEnhance # 新增：引入图像增强调参模块
-import pytesseract
+from PIL import Image
+import numpy as np
+from rapidocr_onnxruntime import RapidOCR # 引入地表最强轻量级 OCR
 import requests
 import io
 
 st.set_page_config(page_title="股票分拣终端", page_icon="📈", layout="wide")
 
-st.title("📈 股票分拣终端 v9.2 (可视化调参版)")
-st.markdown("⚡ **双核引擎:** 腾讯实盘 + BS历史 | 🎛️ **全新特性:** 引入可视化 OCR 调参台，破解一切复杂截图")
+st.title("📈 股票分拣终端 v10.0 (RapidOCR 满血版)")
+st.markdown("⚡ **双核引擎:** 腾讯实盘 + BS历史 | 👁️ **视觉颠覆:** 深度学习级 OCR，无需调参，专治百股密集截图！")
+
+# ==========================================
+# (!! 核心升级 !!) 把 AI 模型常驻内存，秒级启动
+# ==========================================
+@st.cache_resource(show_spinner=False)
+def load_ocr_engine():
+    return RapidOCR()
+
+ocr = load_ocr_engine()
 
 # ==========================================
 # 记忆缓存模块
@@ -57,73 +67,49 @@ def get_tencent_batch_realtime(symbol_list):
         return {}
 
 # ==========================================
-# 交互界面：可视化调参台
+# 交互界面：极简全自动扫描
 # ==========================================
-with st.expander("📸 展开使用【可视化截图识股】 (专治各种密集/模糊截图)", expanded=True):
-    uploaded_file = st.file_uploader("支持上传手机截屏", type=["jpg", "png", "jpeg"])
+with st.expander("📸 展开使用【深度学习扫码】 (直接上传，无需任何调参)", expanded=True):
+    uploaded_file = st.file_uploader("支持上传手机截屏 (无视暗黑模式/极小字体)", type=["jpg", "png", "jpeg"])
     
     auto_codes = ""
     if uploaded_file is not None:
-        col1, col2 = st.columns([1, 1.2])
+        col1, col2 = st.columns([1, 1])
         
-        # --- 左侧：调参控制台 ---
         with col1:
-            st.markdown("#### 🎛️ 图像调参控制台")
-            st.caption("请调节滑块，直到右侧的图片变成清晰的『白底黑字』或『黑底白字』")
+            st.image(uploaded_file, caption="原始截图", use_container_width=True)
             
-            # 提供互动滑块
-            contrast = st.slider("对比度 (拉大可以让字迹更浓)", 0.5, 4.0, 1.5, 0.1)
-            brightness = st.slider("亮度 (太暗就提亮)", 0.5, 3.0, 1.0, 0.1)
-            do_invert = st.checkbox("☯️ 颜色反转 (暗黑模式极度推荐勾选)", value=True)
-            
-            # AI 模式选择 (不同模式对排版的理解不同)
-            psm_mode = st.radio("🤖 AI 阅读模式 (如果漏字可以切换试试)", 
-                                options=["--psm 6 (默认: 均匀文本块)", "--psm 4 (假设为单列数据)", "--psm 11 (极度稀疏散乱文本)"],
-                                index=0)
-
-        # --- 右侧：实时预览与识别 ---
         with col2:
-            st.markdown("#### 👁️ AI 实际看到的画面")
-            
-            # 动态图像处理逻辑
-            img = Image.open(uploaded_file).convert('RGB')
-            
-            # 1. 调对比度
-            enhancer_c = ImageEnhance.Contrast(img)
-            img = enhancer_c.enhance(contrast)
-            
-            # 2. 调亮度
-            enhancer_b = ImageEnhance.Brightness(img)
-            img = enhancer_b.enhance(brightness)
-            
-            # 3. 转灰度 (去掉红绿颜色的干扰)
-            img = img.convert('L')
-            
-            # 4. 反转颜色
-            if do_invert:
-                img = ImageOps.invert(img)
-                
-            # 实时显示处理后的图片！
-            st.image(img, use_container_width=True)
-            
-            with st.spinner("AI 正在凝视右侧的图片并提取代码..."):
+            with st.spinner("🧠 深度学习大模型正在解析图像..."):
                 try:
-                    # 提取真正的 PSM 参数
-                    actual_psm = psm_mode.split(" ")[0] + " " + psm_mode.split(" ")[1]
+                    # 1. 直接把图片喂给 numpy 矩阵
+                    img = Image.open(uploaded_file).convert('RGB')
+                    img_np = np.array(img)
                     
-                    text = pytesseract.image_to_string(img, config=actual_psm)
+                    # 2. 召唤 RapidOCR 瞬间提取！
+                    # result 里面包含了坐标、文字和置信度
+                    result, _ = ocr(img_np)
+                    
+                    # 3. 把所有的文字拼接起来
+                    text = ""
+                    if result:
+                        for line in result:
+                            # line[1] 就是识别出来的纯文本
+                            text += line[1] + " "
+                    
+                    # 4. 暴力提取 6 位数代码
                     codes = re.findall(r'\b(60\d{4}|68\d{4}|00\d{4}|30\d{4})\b', text)
                     unique_codes = list(set(codes))
                     
                     if unique_codes:
                         unique_codes.sort()
-                        st.success(f"🎉 成功锁定 {len(unique_codes)} 只股票！")
+                        st.success(f"🎉 降维打击成功！精准锁定 {len(unique_codes)} 只股票！")
                         auto_codes = ", ".join(unique_codes)
                         st.code(auto_codes)
                     else:
-                        st.error("没有找到代码。请尝试调节左侧的对比度或亮度滑块，或者切换 AI 阅读模式。")
+                        st.error("未发现任何符合规则的 6 位数字代码。")
                 except Exception as e:
-                    st.error(f"识别引擎错误: {e}")
+                    st.error(f"AI 引擎崩溃: {e}")
 st.markdown("---")
 
 st.markdown("### ⌨️ 代码控制台")
