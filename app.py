@@ -11,8 +11,8 @@ import pytesseract
 
 st.set_page_config(page_title="股票分拣终端", page_icon="📈", layout="wide")
 
-st.title("📈 股票分拣终端 v15.2 (终极透视版)")
-st.markdown("⚡ **双核引擎:** 腾讯实盘 + BS历史 | 🧠 **100% 打捞:** 错位双重扫描 + 滑窗透视提取法！")
+st.title("📈 股票分拣终端 v15.3 (极简护眼版)")
+st.markdown("⚡ **双核引擎:** 腾讯实盘 + BS历史 | 🧠 **100% 打捞:** 错位双重扫描 + 极简折叠交互！")
 
 # ==========================================
 # (!! 核心黑科技 !!) 错位双重切片显微引擎
@@ -74,7 +74,6 @@ def local_unlimited_ocr(uploaded_file, show_debug=False):
         
         try:
             text_6 = pytesseract.image_to_string(chunk_final, config='--psm 6')
-            # 强力容错补丁：处理常见字母变异
             combined_text = text_6.replace('O', '0').replace('o', '0').replace('C', '0').replace('I', '1').replace('l', '1').replace('S', '5').replace('U', '0').replace('B', '8')
             all_text += combined_text + " "
         except Exception as e:
@@ -120,7 +119,6 @@ def get_tencent_batch_realtime(symbol_list):
 # ==========================================
 # 交互界面：呼叫本地算力
 # ==========================================
-# 💡 扩展正则字典：包含 A股、科创板、创业板、北交所(83/87/43)、所有 ETF(15/50/51/56/58)
 REGEX_PATTERN = r'(?=(60\d{4}|68\d{4}|00\d{4}|30\d{4}|15\d{4}|50\d{4}|51\d{4}|56\d{4}|58\d{4}|83\d{4}|87\d{4}|43\d{4}))'
 
 with st.expander("📸 展开使用【纯本地智能扫图】", expanded=True):
@@ -129,31 +127,30 @@ with st.expander("📸 展开使用【纯本地智能扫图】", expanded=True):
     
     auto_codes = ""
     if uploaded_file is not None:
-        col1, col2 = st.columns([1, 1])
-        with col1: 
+        
+        # 💡 UX 升级：将冗长的原图隐藏进折叠面板，默认不展开
+        with st.expander("🖼️ 查看上传的原始截图 (核对漏网之鱼时展开)", expanded=False):
             st.image(uploaded_file, caption="原始截图", use_container_width=True)
             
-        with col2:
-            with st.spinner("🧠 滑窗透视提取法已开启，绝不放过任何嵌套代码..."):
-                try:
-                    text = local_unlimited_ocr(uploaded_file, show_debug=debug_mode)
+        with st.spinner("🧠 滑窗透视提取法已开启，绝不放过任何嵌套代码..."):
+            try:
+                text = local_unlimited_ocr(uploaded_file, show_debug=debug_mode)
+                
+                codes = re.findall(REGEX_PATTERN, text)
+                unique_codes = list(set(codes))
+                
+                if unique_codes:
+                    unique_codes.sort()
+                    st.success(f"🎉 破解完毕！大满贯提取 {len(unique_codes)} 只标的！")
+                    auto_codes = ", ".join(unique_codes)
+                    st.code(auto_codes)
+                else:
+                    st.error("未能提取到有效代码。")
                     
-                    # 💡 终极滑窗提取：无视前后的乱码，提取所有潜在的 6 位有效代码
-                    codes = re.findall(REGEX_PATTERN, text)
-                    unique_codes = list(set(codes))
-                    
-                    if unique_codes:
-                        unique_codes.sort()
-                        st.success(f"🎉 破解完毕！大满贯提取 {len(unique_codes)} 只标的 (已过滤噪音)！")
-                        auto_codes = ", ".join(unique_codes)
-                        st.code(auto_codes)
-                    else:
-                        st.error("未能提取到有效代码。")
-                        
-                    with st.expander("🛠️ 查看 AI 眼里的原始字符"):
-                        st.text(text if text.strip() else "【完全空白】")
-                except Exception as e:
-                    st.error(f"发生意外错误: {e}")
+                with st.expander("🛠️ 查看 AI 眼里的原始字符"):
+                    st.text(text if text.strip() else "【完全空白】")
+            except Exception as e:
+                st.error(f"发生意外错误: {e}")
 st.markdown("---")
 
 st.markdown("### ⌨️ 代码控制台")
@@ -164,14 +161,13 @@ if st.button("🚀 启动极速分拣", use_container_width=True):
     clean_stocks = []
     
     for raw in raw_list:
-        # 手动输入也支持滑窗透视
         codes = re.findall(REGEX_PATTERN, raw)
         clean_stocks.extend(codes)
                 
     clean_stocks = list(set(clean_stocks))
 
     if not clean_stocks:
-        st.warning("❌ 必须输入至少一只 6 位数有效代码。")
+        st.warning("❌ 必须输入至少一只 6 位数有效代码 (支持 A股 / ETF)。")
     else:
         with st.spinner(f"⚡ 正在为 {len(clean_stocks)} 只标的执行动能与空间计算... (假代码将被自动剔除)"):
             tc_realtime_data = get_tencent_batch_realtime(clean_stocks)
